@@ -1,0 +1,1158 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Market Simulator</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;500;700&family=Noto+Serif+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Serif SC', 'Noto Serif TC', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(to bottom, #f3f4f6, #e5e7eb);
+        }
+        .zh-cn, .zh-hk {
+            font-family: 'Noto Serif SC', 'Noto Serif TC', sans-serif;
+        }
+        .card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+        }
+        .btn {
+            transition: background-color 0.3s ease, transform 0.2s ease;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+        }
+        .chart-container {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            background: white;
+        }
+        #game-menu {
+            display: flex;
+        }
+        #game-menu.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Game Menu Modal -->
+    <div id="game-menu" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-lg max-w-lg w-full">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6" id="menu-title">Stock Market Simulator</h2>
+            <div class="flex flex-col space-y-4">
+                <button class="btn bg-indigo-600 text-white px-4 py-2 rounded-lg" onclick="startNewGame()" id="start-game-btn">Start New Game</button>
+                <button class="btn bg-gray-500 text-white px-4 py-2 rounded-lg" onclick="showInstructions()" id="instructions-btn">View Instructions</button>
+                <button class="btn bg-red-500 text-white px-4 py-2 rounded-lg" onclick="resetGame()" id="reset-btn">Reset Game</button>
+                <label class="flex items-center space-x-2">
+                    <input type="checkbox" id="non-stop-mode" class="h-4 w-4">
+                    <span id="non-stop-label">Non-Stop Mode</span>
+                </label>
+            </div>
+            <div id="instructions" class="hidden mt-4 text-gray-600"></div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-indigo-900 text-white py-4 shadow-lg">
+        <div class="container mx-auto px-4 flex items-center justify-between">
+            <h1 class="text-2xl font-bold" id="header-title">Stock Market Simulator</h1>
+            <div class="flex items-center space-x-4">
+                <span id="mode-indicator" class="text-sm hidden">Non-Stop Mode</span>
+                <button class="btn bg-gray-600 text-white px-3 py-1 rounded-lg" onclick="document.getElementById('game-menu').classList.remove('hidden')" id="menu-btn">Menu</button>
+                <select id="language-select" class="bg-indigo-700 text-white rounded-lg p-2 focus:outline-none">
+                    <option value="en">English</option>
+                    <option value="zh-hk">Cantonese (繁體)</option>
+                    <option value="zh-cn">Chinese (简体)</option>
+                </select>
+                <div class="text-sm" id="day-display">Day: <span id="day">1</span></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
+        <!-- Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-md card">
+                <h3 class="text-lg font-semibold text-gray-800" id="cash-label">Cash Balance</h3>
+                <p class="text-2xl font-bold text-indigo-600">$<span id="cash">10000.00</span></p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md card">
+                <h3 class="text-lg font-semibold text-gray-800" id="portfolio-label">Portfolio Value</h3>
+                <p class="text-2xl font-bold text-indigo-600">$<span id="portfolio-value">0.00</span></p>
+                <p class="text-sm text-gray-600 mt-2" id="dividends-label">Daily Dividends: $<span id="daily-dividends">0.00</span></p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md card">
+                <h3 class="text-lg font-semibold text-gray-800" id="debt-label">National Debt</h3>
+                <p class="text-2xl font-bold text-indigo-600">$<span id="national-debt">30.00</span>T</p>
+            </div>
+        </div>
+
+        <!-- Financial Actions -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Loans -->
+            <div class="bg-white p-6 rounded-lg shadow-md card">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4" id="loans-label">Manage Loans</h3>
+                <p class="text-gray-600 mb-2" id="loan-balance-label">Loan Balance: $<span id="loan-balance">0.00</span></p>
+                <p class="text-gray-600 mb-2" id="loan-interest-label">Daily Interest: $<span id="loan-interest">0.00</span></p>
+                <p class="text-gray-600 mb-4" id="leverage-label">Leverage Ratio: <span id="leverage-ratio">1.00</span>x</p>
+                <div class="flex space-x-2">
+                    <input type="number" id="loan-amount" class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Loan amount" min="0">
+                    <button class="btn bg-green-500 text-white px-4 py-2 rounded-lg" onclick="takeLoan()" id="take-loan-btn">Take Loan</button>
+                    <button class="btn bg-red-500 text-white px-4 py-2 rounded-lg" onclick="repayLoan()" id="repay-loan-btn">Repay Loan</button>
+                </div>
+            </div>
+
+            <!-- Government Bonds -->
+            <div class="bg-white p-6 rounded-lg shadow-md card">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4" id="bonds-label">Government Bonds</h3>
+                <p class="text-gray-600 mb-2" id="bond-price-label">Bond Price: $100 | Interest: 3% daily</p>
+                <p class="text-gray-600 mb-4" id="bond-owned-label">Owned: <span id="bond-count">0</span> | Value: $<span id="bond-value">0.00</span></p>
+                <div class="flex space-x-2">
+                    <input type="number" id="bond-amount" class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Number of bonds" min="0">
+                    <button class="btn bg-green-500 text-white px-4 py-2 rounded-lg" onclick="buyBonds()" id="buy-bonds-btn">Buy Bonds</button>
+                    <button class="btn bg-red-500 text-white px-4 py-2 rounded-lg" onclick="sellBonds()" id="sell-bonds-btn">Sell Bonds</button>
+                </div>
+                <p id="bond-message" class="mt-2 text-green-600"></p>
+            </div>
+        </div>
+
+        <!-- Trade Interface -->
+        <div class="bg-white p-6 rounded-lg shadow-md card mb-8">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4" id="trade-label">Trade Stocks</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h4 class="text-md font-medium text-gray-700 mb-2" id="buy-stock-label">Buy Stock</h4>
+                    <select id="buy-stock" class="w-full border border-gray-300 rounded-lg p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Select a stock</option>
+                    </select>
+                    <p id="buy-price" class="text-gray-600 mb-2"></p>
+                    <div class="flex space-x-2">
+                        <input type="number" id="buy-shares" class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Shares" min="1">
+                        <button class="btn bg-green-500 text-white px-4 py-2 rounded-lg" onclick="buyStock()" id="buy-stock-btn">Buy</button>
+                    </div>
+                    <p id="buy-message" class="mt-2 text-green-600"></p>
+                </div>
+                <div>
+                    <h4 class="text-md font-medium text-gray-700 mb-2" id="sell-stock-label">Sell Stock</h4>
+                    <select id="sell-stock" class="w-full border border-gray-300 rounded-lg p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Select a stock</option>
+                    </select>
+                    <p id="sell-price" class="text-gray-600 mb-2"></p>
+                    <div class="flex space-x-2">
+                        <input type="number" id="sell-shares" class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Shares" min="1">
+                        <button class="btn bg-red-500 text-white px-4 py-2 rounded-lg" onclick="sellStock()" id="sell-stock-btn">Sell</button>
+                    </div>
+                    <p id="sell-message" class="mt-2 text-green-600"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Low Stocks -->
+        <div class="bg-white p-6 rounded-lg shadow-md card mb-8">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4" id="low-stocks-label">Absorb Low Stocks</h3>
+            <p class="text-gray-600 mb-4" id="low-stocks-desc">Stocks below 70% of initial price can be bought at a 10% discount.</p>
+            <div id="low-stocks" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
+            <p id="low-stocks-message" class="mt-4 text-gray-600"></p>
+        </div>
+
+        <!-- Stock Listings -->
+        <h3 class="text-xl font-semibold text-gray-800 mb-4" id="stocks-label">Stocks</h3>
+        <div id="stock-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8"></div>
+
+        <!-- Event Display -->
+        <div id="event-display" class="mb-8"></div>
+
+        <!-- Upcoming Events -->
+        <div class="bg-white p-6 rounded-lg shadow-md card">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4" id="events-label">Upcoming Events</h3>
+            <div id="upcoming-events" class="max-h-48 overflow-y-auto"></div>
+        </div>
+
+        <!-- Next Day Button -->
+        <div class="text-center mt-8">
+            <button class="btn bg-indigo-600 text-white px-6 py-3 rounded-lg text-lg font-medium" onclick="nextDay()" id="next-day-btn">Next Day</button>
+        </div>
+    </main>
+
+    <script>
+        // Language settings
+        let currentLanguage = 'en';
+        let nonStopMode = false;
+        const maxDays = 30;
+        const translations = {
+            en: {
+                headerTitle: 'Stock Market Simulator',
+                dayDisplay: 'Day: {day}',
+                dayDisplayStandard: 'Day: {day}/30',
+                cashLabel: 'Cash Balance',
+                portfolioLabel: 'Portfolio Value',
+                dividendsLabel: 'Daily Dividends: ${amount}',
+                debtLabel: 'National Debt',
+                loansLabel: 'Manage Loans',
+                loanBalanceLabel: 'Loan Balance: ${amount}',
+                loanInterestLabel: 'Daily Interest: ${amount}',
+                leverageLabel: 'Leverage Ratio: {ratio}x',
+                takeLoanBtn: 'Take Loan',
+                repayLoanBtn: 'Repay Loan',
+                bondsLabel: 'Government Bonds',
+                bondPriceLabel: 'Bond Price: $100 | Interest: 3% daily',
+                bondOwnedLabel: 'Owned: {count} | Value: ${value}',
+                buyBondsBtn: 'Buy Bonds',
+                sellBondsBtn: 'Sell Bonds',
+                tradeLabel: 'Trade Stocks',
+                buyStockLabel: 'Buy Stock',
+                sellStockLabel: 'Sell Stock',
+                buyStockBtn: 'Buy',
+                sellStockBtn: 'Sell',
+                selectStock: 'Select a stock',
+                lowStocksLabel: 'Absorb Low Stocks',
+                lowStocksDesc: 'Stocks below 70% of initial price can be bought at a 10% discount.',
+                absorbLowBtn: 'Absorb Low',
+                stocksLabel: 'Stocks',
+                eventsLabel: 'Upcoming Events',
+                nextDayBtn: 'Next Day',
+                price: 'Price: ${price}',
+                owned: 'Owned: {owned}',
+                noLowStocks: 'No stocks are currently at a low price.',
+                noEvents: 'No upcoming events scheduled.',
+                eventOccurred: 'Event Occurred: {description}',
+                upcomingEvent: 'Day {day}: {description} (Affects: {affected})',
+                gameOver: 'Game Over!',
+                gameOverPortfolio: 'Portfolio Value: ${value}',
+                gameOverLoan: 'Loan Repaid: ${amount}',
+                gameOverAssets: 'Your final assets: ${amount}',
+                gameOverResult: 'You started with $10000 and ended with ${amount}, a {result} of ${diff}.',
+                menuTitle: 'Stock Market Simulator',
+                startGameBtn: 'Start New Game',
+                instructionsBtn: 'View Instructions',
+                resetBtn: 'Reset Game',
+                menuBtn: 'Menu',
+                nonStopLabel: 'Non-Stop Mode',
+                nonStopModeLabel: 'Non-Stop Mode',
+                instructions: `
+                    <h3 class="text-lg font-semibold mb-2">How to Play</h3>
+                    <p>Welcome to the Stock Market Simulator! Manage your portfolio to maximize your wealth.</p>
+                    <ul class="list-disc pl-5">
+                        <li><strong>Stocks</strong>: Buy and sell stocks based on market prices. Prices fluctuate daily. Earn 1% daily dividends per share owned.</li>
+                        <li><strong>Government Bonds</strong>: Purchase bonds at $100 each with 3% daily interest.</li>
+                        <li><strong>Absorb Low Stocks</strong>: Buy stocks below 70% of their initial price at a 10% discount (once per stock per day).</li>
+                        <li><strong>Loans</strong>: Borrow up to 50% of your assets at 5% daily interest. Repay loans to reduce interest costs.</li>
+                        <li><strong>Events</strong>: Daily events affect stock prices or national debt. Check upcoming events to plan your strategy.</li>
+                        <li><strong>National Debt</strong>: Influences market stability and stock prices.</li>
+                        <li><strong>Non-Stop Mode</strong>: Toggle in the menu to play indefinitely without a 30-day limit.</li>
+                    </ul>
+                    <p>Click "Next Day" to advance. In standard mode, the game ends after 30 days, and your final assets are calculated.</p>
+                `,
+                alerts: {
+                    invalidLoan: 'Please enter a valid loan amount.',
+                    loanExceeds: 'Loan exceeds maximum limit of ${amount}.',
+                    invalidRepay: 'Please enter a valid repayment amount.',
+                    repayNoCash: 'Not enough cash to repay this amount.',
+                    repayExceeds: 'Repayment exceeds loan balance.',
+                    invalidBonds: 'Please enter a valid number of bonds.',
+                    bondsExceed: 'Cannot buy more than {max} bonds based on your assets.',
+                    noCashBonds: 'Not enough cash to buy bonds.',
+                    noBondsOwned: 'Not enough bonds owned.',
+                    noStockSelected: 'Please select a stock.',
+                    invalidShares: 'Please enter a valid number of shares.',
+                    invalidStock: 'Invalid stock selected.',
+                    noCashStock: 'Not enough cash to buy.',
+                    noSharesOwned: 'Not enough shares owned.',
+                    alreadyAbsorbed: 'Already absorbed low for {stock} today.',
+                    noCashLow: 'Not enough cash to absorb low.'
+                },
+                messages: {
+                    boughtBonds: 'Bought {amount} bonds at ${price} each for ${total}.',
+                    soldBonds: 'Sold {amount} bonds for ${total} (including ${interest} interest).',
+                    boughtStock: 'Bought {shares} shares of {stock} at ${price} each for ${total}.',
+                    soldStock: 'Sold {shares} shares of {stock} at ${price} each for ${total}.',
+                    absorbedLow: 'Absorbed {shares} shares of {stock} at ${price} each for ${total}.'
+                }
+            },
+            'zh-hk': {
+                headerTitle: '股票市場模擬器',
+                dayDisplay: '第 {day} 天',
+                dayDisplayStandard: '第 {day} 天 / 30',
+                cashLabel: '現金餘額',
+                portfolioLabel: '投資組合價值',
+                dividendsLabel: '每日股息：${amount}',
+                debtLabel: '國債',
+                loansLabel: '管理貸款',
+                loanBalanceLabel: '貸款餘額：${amount}',
+                loanInterestLabel: '每日利息：${amount}',
+                leverageLabel: '槓桿比率：{ratio}x',
+                takeLoanBtn: '借貸',
+                repayLoanBtn: '還款',
+                bondsLabel: '政府債券',
+                bondPriceLabel: '債券價格：$100 | 每日利息：3%',
+                bondOwnedLabel: '持有：{count} | 價值：${value}',
+                buyBondsBtn: '購買債券',
+                sellBondsBtn: '賣出債券',
+                tradeLabel: '股票交易',
+                buyStockLabel: '買入股票',
+                sellStockLabel: '賣出股票',
+                buyStockBtn: '買入',
+                sellStockBtn: '賣出',
+                selectStock: '選擇股票',
+                lowStocksLabel: '吸納低價股票',
+                lowStocksDesc: '低於初始價格70%的股票可享10%折扣購買。',
+                absorbLowBtn: '吸納低價',
+                stocksLabel: '股票',
+                eventsLabel: '即將發生的事件',
+                nextDayBtn: '下一天',
+                price: '價格：${price}',
+                owned: '持有：{owned}',
+                noLowStocks: '目前沒有低價股票。',
+                noEvents: '沒有即將發生的事件。',
+                eventOccurred: '事件發生：{description}',
+                upcomingEvent: '第 {day} 天：{description}（影響：{affected}）',
+                gameOver: '遊戲結束！',
+                gameOverPortfolio: '投資組合價值：${value}',
+                gameOverLoan: '已償還貸款：${amount}',
+                gameOverAssets: '最終資產：${amount}',
+                gameOverResult: '您由 $10000 開始，最終資產為 ${amount}，{result} ${diff}。',
+                menuTitle: '股票市場模擬器',
+                startGameBtn: '開始新遊戲',
+                instructionsBtn: '查看說明',
+                resetBtn: '重置遊戲',
+                menuBtn: '選單',
+                nonStopLabel: '無限模式',
+                nonStopModeLabel: '無限模式',
+                instructions: `
+                    <h3 class="text-lg font-semibold mb-2">遊戲玩法</h3>
+                    <p>歡迎體驗股票市場模擬器！管理您的投資組合，最大化您的財富。</p>
+                    <ul class="list-disc pl-5">
+                        <li><strong>股票</strong>：根據市場價格買賣股票，價格每日波動。每股每日獲1%股息。</li>
+                        <li><strong>政府債券</strong>：以每張 $100 購買債券，每日獲3%利息。</li>
+                        <li><strong>吸納低價股票</strong>：低於初始價格70%的股票可享10%折扣購買（每隻股票每日限一次）。</li>
+                        <li><strong>貸款</strong>：可借資產的50%，每日利息5%。償還貸款以減少利息成本。</li>
+                        <li><strong>事件</strong>：每日事件影響股票價格或國債。查看即將發生的事件以制定策略。</li>
+                        <li><strong>國債</strong>：影響市場穩定性和股票價格。</li>
+                        <li><strong>無限模式</strong>：在選單中啟用，無30天限制，無限期遊玩。</li>
+                    </ul>
+                    <p>點擊「下一天」繼續遊戲。標準模式下，遊戲於30天后結束，計算您的最終資產。</p>
+                `,
+                alerts: {
+                    invalidLoan: '請輸入有效的貸款金額。',
+                    loanExceeds: '貸款超過最高限額 ${amount}。',
+                    invalidRepay: '請輸入有效的還款金額。',
+                    repayNoCash: '現金不足以償還此金額。',
+                    repayExceeds: '還款金額超過貸款餘額。',
+                    invalidBonds: '請輸入有效的債券數量。',
+                    bondsExceed: '根據您的資產，不能購買超過 {max} 債券。',
+                    noCashBonds: '現金不足以購買債券。',
+                    noBondsOwned: '沒有足夠的債券可賣出。',
+                    noStockSelected: '請選擇一隻股票。',
+                    invalidShares: '請輸入有效的股份數量。',
+                    invalidStock: '選擇的股票無效。',
+                    noCashStock: '現金不足以購買股票。',
+                    noSharesOwned: '沒有足夠的股份可賣出。',
+                    alreadyAbsorbed: '今日已吸納 {stock} 的低價股票。',
+                    noCashLow: '現金不足以吸納低價股票。'
+                },
+                messages: {
+                    boughtBonds: '以每張 ${price} 購買 {amount} 債券，共 ${total}。',
+                    soldBonds: '賣出 {amount} 債券，共 ${total}（包括利息 ${interest}）。',
+                    boughtStock: '以每股 ${price} 購買 {shares} 股 {stock}，共 ${total}。',
+                    soldStock: '以每股 ${price} 賣出 {shares} 股 {stock}，共 ${total}。',
+                    absorbedLow: '以每股 ${price} 吸納 {shares} 股 {stock}，共 ${total}。'
+                }
+            },
+            'zh-cn': {
+                headerTitle: '股票市场模拟器',
+                dayDisplay: '第 {day} 天',
+                dayDisplayStandard: '第 {day} 天 / 30',
+                cashLabel: '现金余额',
+                portfolioLabel: '投资组合价值',
+                dividendsLabel: '每日股息：${amount}',
+                debtLabel: '国债',
+                loansLabel: '管理贷款',
+                loanBalanceLabel: '贷款余额：${amount}',
+                loanInterestLabel: '每日利息：${amount}',
+                leverageLabel: '杠杆比率：{ratio}x',
+                takeLoanBtn: '借款',
+                repayLoanBtn: '还款',
+                bondsLabel: '政府债券',
+                bondPriceLabel: '债券价格：$100 | 每日利息：3%',
+                bondOwnedLabel: '持有：{count} | 价值：${value}',
+                buyBondsBtn: '购买债券',
+                sellBondsBtn: '卖出债券',
+                tradeLabel: '股票交易',
+                buyStockLabel: '买入股票',
+                sellStockLabel: '卖出股票',
+                buyStockBtn: '买入',
+                sellStockBtn: '卖出',
+                selectStock: '选择股票',
+                lowStocksLabel: '吸纳低价股票',
+                lowStocksDesc: '低于初始价格70%的股票可享10%折扣购买。',
+                absorbLowBtn: '吸纳低价',
+                stocksLabel: '股票',
+                eventsLabel: '即将发生的事件',
+                nextDayBtn: '下一天',
+                price: '价格：${price}',
+                owned: '持有：{owned}',
+                noLowStocks: '目前没有低价股票。',
+                noEvents: '没有即将发生的事件。',
+                eventOccurred: '事件发生：{description}',
+                upcomingEvent: '第 {day} 天：{description}（影响：{affected}）',
+                gameOver: '游戏结束！',
+                gameOverPortfolio: '投资组合价值：${value}',
+                gameOverLoan: '已偿还贷款：${amount}',
+                gameOverAssets: '最终资产：${amount}',
+                gameOverResult: '您从 $10000 开始，最终资产为 ${amount}，{result} ${diff}。',
+                menuTitle: '股票市场模拟器',
+                startGameBtn: '开始新游戏',
+                instructionsBtn: '查看说明',
+                resetBtn: '重置游戏',
+                menuBtn: '菜单',
+                nonStopLabel: '无限模式',
+                nonStopModeLabel: '无限模式',
+                instructions: `
+                    <h3 class="text-lg font-semibold mb-2">游戏玩法</h3>
+                    <p>欢迎体验股票市场模拟器！管理您的投资组合，最大化您的财富。</p>
+                    <ul class="list-disc pl-5">
+                        <li><strong>股票</strong>：根据市场价格买卖股票，价格每日波动。每股每日获1%股息。</li>
+                        <li><strong>政府债券</strong>：以每张 $100 购买债券，每日获3%利息。</li>
+                        <li><strong>吸纳低价股票</strong>：低于初始价格70%的股票可享10%折扣购买（每只股票每日限一次）。</li>
+                        <li><strong>贷款</strong>：可借资产的50%，每日利息5%。偿还贷款以减少利息成本。</li>
+                        <li><strong>事件</strong>：每日事件影响股票价格或国债。查看即将发生的事件以制定策略。</li>
+                        <li><strong>国债</strong>：影响市场稳定性和股票价格。</li>
+                        <li><strong>无限模式</strong>：在菜单中启用，无30天限制，无限期游玩。</li>
+                    </ul>
+                    <p>点击“下一天”继续游戏。标准模式下，游戏于30天后结束，计算您的最终资产。</p>
+                `,
+                alerts: {
+                    invalidLoan: '请输入有效的贷款金额。',
+                    loanExceeds: '贷款超过最高限额 ${amount}。',
+                    invalidRepay: '请输入有效的还款金额。',
+                    repayNoCash: '现金不足以偿还此金额。',
+                    repayExceeds: '还款金额超过贷款余额。',
+                    invalidBonds: '请输入有效的债券数量。',
+                    bondsExceed: '根据您的资产，不能购买超过 {max} 债券。',
+                    noCashBonds: '现金不足以购买债券。',
+                    noBondsOwned: '没有足够的债券可卖出。',
+                    noStockSelected: '请选择一只股票。',
+                    invalidShares: '请输入有效的股份数量。',
+                    invalidStock: '选择的股票无效。',
+                    noCashStock: '现金不足以购买股票。',
+                    noSharesOwned: '没有足够的股份可卖出。',
+                    alreadyAbsorbed: '今日已吸纳 {stock} 的低价股票。',
+                    noCashLow: '现金不足以吸纳低价股票。'
+                },
+                messages: {
+                    boughtBonds: '以每张 ${price} 购买 {amount} 债券，共 ${total}。',
+                    soldBonds: '卖出 {amount} 债券，共 ${total}（包括利息 ${interest}）。',
+                    boughtStock: '以每股 ${price} 购买 {shares} 股 {stock}，共 ${total}。',
+                    soldStock: '以每股 ${price} 卖出 {shares} 股 {stock}，共 ${total}。',
+                    absorbedLow: '以每股 ${price} 吸纳 {shares} 股 {stock}，共 ${total}。'
+                }
+            }
+        };
+
+        // Global variables
+        let cash = 10000;
+        let day = 1;
+        let loanBalance = 0;
+        const loanInterestRate = 0.05;
+        let nationalDebt = 30;
+        let bondCount = 0;
+        const bondPrice = 100;
+        const bondInterestRate = 0.03;
+        let bondDaysHeld = 0;
+        let lowStockPurchasesToday = {};
+        let upcomingEvents = [];
+        let charts = {};
+
+        const initialStocks = [
+            { name: 'TechCorp', price: 150.0, volatility: 0.08, history: [150.0], owned: 0, initialPrice: 150.0, dividendRate: 0.01 },
+            { name: 'HealthInc', price: 120.0, volatility: 0.05, history: [120.0], owned: 0, initialPrice: 120.0, dividendRate: 0.01 },
+            { name: 'EnergyCo', price: 80.0, volatility: 0.07, history: [80.0], owned: 0, initialPrice: 80.0, dividendRate: 0.01 },
+            { name: 'RetailX', price: 200.0, volatility: 0.06, history: [200.0], owned: 0, initialPrice: 200.0, dividendRate: 0.01 },
+            { name: 'AutoMfg', price: 90.0, volatility: 0.09, history: [90.0], owned: 0, initialPrice: 90.0, dividendRate: 0.01 },
+            { name: 'FoodCorp', price: 110.0, volatility: 0.04, history: [110.0], owned: 0, initialPrice: 110.0, dividendRate: 0.01 },
+            { name: 'BankInc', price: 130.0, volatility: 0.06, history: [130.0], owned: 0, initialPrice: 130.0, dividendRate: 0.01 },
+            { name: 'MediaNet', price: 170.0, volatility: 0.07, history: [170.0], owned: 0, initialPrice: 170.0, dividendRate: 0.01 },
+            { name: 'PharmaCo', price: 140.0, volatility: 0.05, history: [140.0], owned: 0, initialPrice: 140.0, dividendRate: 0.01 },
+            { name: 'GreenTech', price: 160.0, volatility: 0.08, history: [160.0], owned: 0, initialPrice: 160.0, dividendRate: 0.01 }
+        ];
+        let stocks = JSON.parse(JSON.stringify(initialStocks));
+
+        const events = [
+            {
+                description: { en: 'Global markets react to new trade policies', 'zh-hk': '全球市場對新貿易政策作出反應', 'zh-cn': '全球市场对新贸易政策作出反应' },
+                probability: 0.1,
+                effect: (stocks) => stocks.forEach(s => s.price *= Math.random() < 0.5 ? 1.1 : 0.9),
+                predicted: false,
+                affected: { en: 'All stocks', 'zh-hk': '所有股票', 'zh-cn': '所有股票' }
+            },
+            {
+                description: { en: 'TechCorp announces a new product', 'zh-hk': 'TechCorp 宣佈新產品', 'zh-cn': 'TechCorp 宣布新产品' },
+                probability: 0.08,
+                effect: (stocks) => stocks[0].price *= 1.15,
+                predicted: false,
+                affected: 'TechCorp'
+            },
+            {
+                description: { en: 'HealthInc faces regulatory review', 'zh-hk': 'HealthInc 面臨監管審查', 'zh-cn': 'HealthInc 面临监管审查' },
+                probability: 0.06,
+                effect: (stocks) => stocks[1].price *= 0.85,
+                predicted: false,
+                affected: 'HealthInc'
+            },
+            {
+                description: { en: 'EnergyCo explores new oil reserves', 'zh-hk': 'EnergyCo 探索新油藏', 'zh-cn': 'EnergyCo 探索新油藏' },
+                probability: 0.07,
+                effect: (stocks) => stocks[2].price *= 1.12,
+                predicted: false,
+                affected: 'EnergyCo'
+            },
+            {
+                description: { en: 'RetailX launches a major ad campaign', 'zh-hk': 'RetailX 推出大型廣告活動', 'zh-cn': 'RetailX 推出大型广告活动' },
+                probability: 0.06,
+                effect: (stocks) => stocks[3].price *= 1.1,
+                predicted: false,
+                affected: 'RetailX'
+            },
+            {
+                description: { en: 'AutoMfg recalls vehicles', 'zh-hk': 'AutoMfg 召回車輛', 'zh-cn': 'AutoMfg 召回车辆' },
+                probability: 0.05,
+                effect: (stocks) => stocks[4].price *= 0.88,
+                predicted: false,
+                affected: 'AutoMfg'
+            },
+            {
+                description: { en: 'Government increases national borrowing', 'zh-hk': '政府增加國家借貸', 'zh-cn': '政府增加国家借贷' },
+                probability: 0.08,
+                effect: (stocks) => {
+                    nationalDebt += 0.5;
+                    stocks.forEach(s => s.price *= 0.95);
+                },
+                predicted: false,
+                affected: { en: 'All stocks', 'zh-hk': '所有股票', 'zh-cn': '所有股票' }
+            },
+            {
+                description: { en: 'Debt ceiling talks falter', 'zh-hk': '債務上限談判失敗', 'zh-cn': '债务上限谈判失败' },
+                probability: 0.06,
+                effect: (stocks) => {
+                    nationalDebt += 0.3;
+                    stocks.forEach(s => s.price *= 0.9);
+                },
+                predicted: false,
+                affected: { en: 'All stocks', 'zh-hk': '所有股票', 'zh-cn': '所有股票' }
+            },
+            {
+                description: { en: 'National debt reduction plan announced', 'zh-hk': '宣佈國債減免計劃', 'zh-cn': '宣布国债减免计划' },
+                probability: 0.05,
+                effect: (stocks) => {
+                    nationalDebt -= 0.2;
+                    stocks.forEach(s => s.price *= 1.1);
+                },
+                predicted: false,
+                affected: { en: 'All stocks', 'zh-hk': '所有股票', 'zh-cn': '所有股票' }
+            }
+        ];
+
+        // Helper functions for safe DOM updates
+        function safeSetText(id, text) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = text;
+            } else {
+                console.warn(`Element with ID '${id}' not found.`);
+            }
+        }
+
+        function safeSetHTML(id, html) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.innerHTML = html;
+            } else {
+                console.warn(`Element with ID '${id}' not found.`);
+            }
+        }
+
+        function resetGame() {
+            cash = 10000;
+            day = 1;
+            loanBalance = 0;
+            nationalDebt = 30;
+            bondCount = 0;
+            bondDaysHeld = 0;
+            lowStockPurchasesToday = {};
+            upcomingEvents = [];
+            stocks = JSON.parse(JSON.stringify(initialStocks));
+            Object.keys(charts).forEach(key => charts[key].destroy());
+            charts = {};
+            nonStopMode = document.getElementById('non-stop-mode')?.checked || false;
+            const gameMenu = document.getElementById('game-menu');
+            if (gameMenu) gameMenu.classList.remove('hidden');
+            const instructions = document.getElementById('instructions');
+            if (instructions) instructions.classList.add('hidden');
+            initializeUpcomingEvents();
+            updateUI();
+        }
+
+        function startNewGame() {
+            resetGame();
+            const gameMenu = document.getElementById('game-menu');
+            if (gameMenu) gameMenu.classList.add('hidden');
+            updateUI();
+        }
+
+        function showInstructions() {
+            const instructionsDiv = document.getElementById('instructions');
+            if (instructionsDiv) {
+                instructionsDiv.innerHTML = translations[currentLanguage].instructions;
+                instructionsDiv.classList.toggle('hidden');
+            } else {
+                console.warn("Instructions element not found.");
+            }
+        }
+
+        function calculatePortfolioValue() {
+            const stockValue = stocks.reduce((sum, stock) => sum + stock.owned * stock.price, 0);
+            const bondValue = bondCount * bondPrice * Math.pow(1 + bondInterestRate, bondDaysHeld);
+            return stockValue + bondValue;
+        }
+
+        function calculateDailyDividends() {
+            return stocks.reduce((sum, stock) => sum + stock.owned * stock.price * stock.dividendRate, 0);
+        }
+
+        function calculateLeverageRatio() {
+            const totalAssets = cash + calculatePortfolioValue();
+            return totalAssets / (cash || 1);
+        }
+
+        function takeLoan() {
+            const amount = parseFloat(document.getElementById('loan-amount')?.value || 0);
+            const totalAssets = cash + calculatePortfolioValue();
+            const maxLoan = totalAssets * 0.5;
+            if (isNaN(amount) || amount <= 0) {
+                alert(translations[currentLanguage].alerts.invalidLoan);
+                return;
+            }
+            if (loanBalance + amount > maxLoan) {
+                alert(translations[currentLanguage].alerts.loanExceeds.replace('{amount}', maxLoan.toFixed(2)));
+                return;
+            }
+            cash += amount;
+            loanBalance += amount;
+            const loanInput = document.getElementById('loan-amount');
+            if (loanInput) loanInput.value = '';
+            updateUI();
+        }
+
+        function repayLoan() {
+            const amount = parseFloat(document.getElementById('loan-amount')?.value || 0);
+            if (isNaN(amount) || amount <= 0) {
+                alert(translations[currentLanguage].alerts.invalidRepay);
+                return;
+            }
+            if (amount > cash) {
+                alert(translations[currentLanguage].alerts.repayNoCash);
+                return;
+            }
+            if (amount > loanBalance) {
+                alert(translations[currentLanguage].alerts.repayExceeds);
+                return;
+            }
+            cash -= amount;
+            loanBalance -= amount;
+            const loanInput = document.getElementById('loan-amount');
+            if (loanInput) loanInput.value = '';
+            updateUI();
+        }
+
+        function buyBonds() {
+            const amount = parseInt(document.getElementById('bond-amount')?.value || 0);
+            const message = document.getElementById('bond-message');
+            if (!message) return;
+            if (isNaN(amount) || amount <= 0) {
+                message.textContent = translations[currentLanguage].alerts.invalidBonds;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const cost = amount * bondPrice;
+            const totalAssets = cash + calculatePortfolioValue();
+            const maxBonds = Math.floor(totalAssets * 0.5 / bondPrice);
+            if (bondCount + amount > maxBonds) {
+                message.textContent = translations[currentLanguage].alerts.bondsExceed.replace('{max}', maxBonds);
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (cost > cash) {
+                message.textContent = translations[currentLanguage].alerts.noCashBonds;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            cash -= cost;
+            bondCount += amount;
+            message.textContent = translations[currentLanguage].messages.boughtBonds
+                .replace('{amount}', amount)
+                .replace('{price}', bondPrice.toFixed(2))
+                .replace('{total}', cost.toFixed(2));
+            message.className = 'mt-2 text-green-600';
+            const bondInput = document.getElementById('bond-amount');
+            if (bondInput) bondInput.value = '';
+            updateUI();
+        }
+
+        function sellBonds() {
+            const amount = parseInt(document.getElementById('bond-amount')?.value || 0);
+            const message = document.getElementById('bond-message');
+            if (!message) return;
+            if (isNaN(amount) || amount <= 0) {
+                message.textContent = translations[currentLanguage].alerts.invalidBonds;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (amount > bondCount) {
+                message.textContent = translations[currentLanguage].alerts.noBondsOwned;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const principal = amount * bondPrice;
+            const interest = principal * (Math.pow(1 + bondInterestRate, bondDaysHeld) - 1);
+            const totalReturn = principal + interest;
+            cash += totalReturn;
+            bondCount -= amount;
+            message.textContent = translations[currentLanguage].messages.soldBonds
+                .replace('{amount}', amount)
+                .replace('{total}', totalReturn.toFixed(2))
+                .replace('{interest}', interest.toFixed(2));
+            message.className = 'mt-2 text-green-600';
+            const bondInput = document.getElementById('bond-amount');
+            if (bondInput) bondInput.value = '';
+            updateUI();
+        }
+
+        function buyStock() {
+            const stockName = document.getElementById('buy-stock')?.value;
+            const shares = parseInt(document.getElementById('buy-shares')?.value || 0);
+            const message = document.getElementById('buy-message');
+            if (!message) return;
+            if (!stockName) {
+                message.textContent = translations[currentLanguage].alerts.noStockSelected;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (isNaN(shares) || shares <= 0) {
+                message.textContent = translations[currentLanguage].alerts.invalidShares;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const stock = stocks.find(s => s.name === stockName);
+            if (!stock) {
+                message.textContent = translations[currentLanguage].alerts.invalidStock;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const cost = shares * stock.price;
+            if (cost > cash) {
+                message.textContent = translations[currentLanguage].alerts.noCashStock;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            cash -= cost;
+            stock.owned += shares;
+            message.textContent = translations[currentLanguage].messages.boughtStock
+                .replace('{shares}', shares)
+                .replace('{stock}', stockName)
+                .replace('{price}', stock.price.toFixed(2))
+                .replace('{total}', cost.toFixed(2));
+            message.className = 'mt-2 text-green-600';
+            const sharesInput = document.getElementById('buy-shares');
+            if (sharesInput) sharesInput.value = '';
+            updateUI();
+        }
+
+        function sellStock() {
+            const stockName = document.getElementById('sell-stock')?.value;
+            const shares = parseInt(document.getElementById('sell-shares')?.value || 0);
+            const message = document.getElementById('sell-message');
+            if (!message) return;
+            if (!stockName) {
+                message.textContent = translations[currentLanguage].alerts.noStockSelected;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (isNaN(shares) || shares <= 0) {
+                message.textContent = translations[currentLanguage].alerts.invalidShares;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const stock = stocks.find(s => s.name === stockName);
+            if (!stock) {
+                message.textContent = translations[currentLanguage].alerts.invalidStock;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (shares > stock.owned) {
+                message.textContent = translations[currentLanguage].alerts.noSharesOwned;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const earnings = shares * stock.price;
+            cash += earnings;
+            stock.owned -= shares;
+            message.textContent = translations[currentLanguage].messages.soldStock
+                .replace('{shares}', shares)
+                .replace('{stock}', stockName)
+                .replace('{price}', stock.price.toFixed(2))
+                .replace('{total}', earnings.toFixed(2));
+            message.className = 'mt-2 text-green-600';
+            const sharesInput = document.getElementById('sell-shares');
+            if (sharesInput) sharesInput.value = '';
+            updateUI();
+        }
+
+        function absorbLowStock(stockName, shares) {
+            const stock = stocks.find(s => s.name === stockName);
+            const message = document.getElementById('low-stocks-message');
+            if (!message) return;
+            if (!stock) {
+                message.textContent = translations[currentLanguage].alerts.invalidStock;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (lowStockPurchasesToday[stockName]) {
+                message.textContent = translations[currentLanguage].alerts.alreadyAbsorbed.replace('{stock}', stockName);
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            if (isNaN(shares) || shares <= 0) {
+                message.textContent = translations[currentLanguage].alerts.invalidShares;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            const discountedPrice = stock.price * 0.9;
+            const cost = shares * discountedPrice;
+            if (cost > cash) {
+                message.textContent = translations[currentLanguage].alerts.noCashLow;
+                message.className = 'mt-2 text-red-600';
+                return;
+            }
+            cash -= cost;
+            stock.owned += shares;
+            lowStockPurchasesToday[stockName] = true;
+            message.textContent = translations[currentLanguage].messages.absorbedLow
+                .replace('{shares}', shares)
+                .replace('{stock}', stockName)
+                .replace('{price}', discountedPrice.toFixed(2))
+                .replace('{total}', cost.toFixed(2));
+            message.className = 'mt-2 text-green-600';
+            updateUI();
+        }
+
+        function updateNationalDebt() {
+            const change = (Math.random() - 0.5) * 0.1;
+            nationalDebt = Math.max(20, nationalDebt + change);
+        }
+
+        function updateStockPrices() {
+            stocks.forEach(stock => {
+                const change = (Math.random() - 0.5) * stock.volatility * stock.price;
+                stock.price = Math.max(1, stock.price + change);
+                stock.price = Number(stock.price.toFixed(2));
+                stock.history.push(stock.price);
+            });
+        }
+
+        function triggerEvent() {
+            const currentEvent = upcomingEvents.find(e => e.day === day);
+            if (currentEvent) {
+                currentEvent.effect(stocks);
+                safeSetHTML('event-display', `
+                    <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-lg">
+                        ${translations[currentLanguage].eventOccurred.replace('{description}', currentEvent.description[currentLanguage])}
+                    </div>
+                `);
+                upcomingEvents = upcomingEvents.filter(e => e.day !== day);
+                events.find(e => e.description[currentLanguage] === currentEvent.description[currentLanguage]).predicted = false;
+                return true;
+            }
+            safeSetHTML('event-display', '');
+            return false;
+        }
+
+        function initializeUpcomingEvents() {
+            upcomingEvents = upcomingEvents.filter(e => e.day > day);
+            let availableEvents = events.filter(e => !e.predicted && !upcomingEvents.some(ue => ue.description[currentLanguage] === e.description[currentLanguage]));
+            if (availableEvents.length === 0) {
+                events.forEach(e => e.predicted = false);
+                availableEvents = [...events];
+            }
+            const shuffledEvents = availableEvents.sort(() => Math.random() - 0.5);
+            let newEventsAdded = 0;
+            for (let i = 0; i < shuffledEvents.length && newEventsAdded < 1; i++) {
+                if (Math.random() < shuffledEvents[i].probability) {
+                    const eventDay = day + 1 + Math.floor(Math.random() * 3);
+                    upcomingEvents.push({ ...shuffledEvents[i], day: eventDay });
+                    events.find(e => e.description[currentLanguage] === shuffledEvents[i].description[currentLanguage]).predicted = true;
+                    newEventsAdded++;
+                }
+            }
+            for (let i = 0; i < shuffledEvents.length && upcomingEvents.length < 3; i++) {
+                if (!shuffledEvents[i].predicted && Math.random() < shuffledEvents[i].probability) {
+                    const eventDay = day + 1 + Math.floor(Math.random() * 3);
+                    upcomingEvents.push({ ...shuffledEvents[i], day: eventDay });
+                    events.find(e => e.description[currentLanguage] === shuffledEvents[i].description[currentLanguage]).predicted = true;
+                }
+            }
+            upcomingEvents.sort((a, b) => a.day - b.day);
+        }
+
+        function updateUI() {
+            const lang = translations[currentLanguage];
+            document.body.className = `min-h-screen ${currentLanguage === 'en' ? '' : currentLanguage}`;
+
+            // Update header elements first
+            safeSetText('header-title', lang.headerTitle);
+            safeSetHTML('day-display', nonStopMode
+                ? lang.dayDisplay.replace('{day}', `<span id="day">${day}</span>`)
+                : lang.dayDisplayStandard.replace('{day}', `<span id="day">${day}</span>`));
+            safeSetText('menu-btn', lang.menuBtn);
+            safeSetText('menu-title', lang.menuTitle);
+            safeSetText('start-game-btn', lang.startGameBtn);
+            safeSetText('instructions-btn', lang.instructionsBtn);
+            safeSetText('reset-btn', lang.resetBtn);
+            safeSetText('non-stop-label', lang.nonStopLabel);
+            safeSetText('non-stop-mode-label', lang.nonStopModeLabel);
+            const nonStopCheckbox = document.getElementById('non-stop-mode');
+            if (nonStopCheckbox) nonStopCheckbox.checked = nonStopMode;
+            const modeIndicator = document.getElementById('mode-indicator');
+            if (modeIndicator) modeIndicator.classList.toggle('hidden', !nonStopMode);
+
+            // Check for game-over condition
+            if (!nonStopMode && day > maxDays) {
+                const portfolioValue = calculatePortfolioValue();
+                const totalAssets = cash + portfolioValue - (loanBalance * (1 + loanInterestRate));
+                const result = totalAssets >= 10000 ? (currentLanguage === 'en' ? 'gain' : currentLanguage === 'zh-hk' ? '盈利' : '盈利') : (currentLanguage === 'en' ? 'loss' : currentLanguage === 'zh-hk' ? '虧損' : '亏损');
+                const mainElement = document.querySelector('main');
+                if (mainElement) {
+                    mainElement.innerHTML = `
+                        <div class="bg-white p-8 rounded-lg shadow-md text-center">
+                            <h1 class="text-3xl font-bold text-gray-800 mb-4">${lang.gameOver}</h1>
+                            <p class="text-lg text-gray-600 mb-2">${lang.gameOverPortfolio.replace('{value}', portfolioValue.toFixed(2))}</p>
+                            <p class="text-lg text-gray-600 mb-2">${lang.gameOverLoan.replace('{amount}', (loanBalance * (1 + loanInterestRate)).toFixed(2))}</p>
+                            <p class="text-lg text-gray-600 mb-2">${lang.gameOverAssets.replace('{amount}', totalAssets.toFixed(2))}</p>
+                            <p class="text-lg text-gray-600">${lang.gameOverResult.replace('{amount}', totalAssets.toFixed(2)).replace('{result}', result).replace('{diff}', Math.abs(totalAssets - 10000).toFixed(2))}</p>
+                        </div>
+                    `;
+                }
+                return; // Exit early to prevent accessing null elements
+            }
+
+            // Update main content elements
+            safeSetText('cash-label', lang.cashLabel);
+            safeSetText('portfolio-label', lang.portfolioLabel);
+            safeSetHTML('dividends-label', lang.dividendsLabel.replace('{amount}', `<span id="daily-dividends">${calculateDailyDividends().toFixed(2)}</span>`));
+            safeSetText('debt-label', lang.debtLabel);
+            safeSetText('loans-label', lang.loansLabel);
+            safeSetHTML('loan-balance-label', lang.loanBalanceLabel.replace('{amount}', `<span id="loan-balance">${loanBalance.toFixed(2)}</span>`));
+            safeSetHTML('loan-interest-label', lang.loanInterestLabel.replace('{amount}', `<span id="loan-interest">${(loanBalance * loanInterestRate).toFixed(2)}</span>`));
+            safeSetHTML('leverage-label', lang.leverageLabel.replace('{ratio}', `<span id="leverage-ratio">${calculateLeverageRatio().toFixed(2)}</span>`));
+            safeSetText('take-loan-btn', lang.takeLoanBtn);
+            safeSetText('repay-loan-btn', lang.repayLoanBtn);
+            safeSetText('bonds-label', lang.bondsLabel);
+            safeSetText('bond-price-label', lang.bondPriceLabel);
+            safeSetHTML('bond-owned-label', lang.bondOwnedLabel.replace('{count}', `<span id="bond-count">${bondCount}</span>`).replace('{value}', `<span id="bond-value">${(bondCount * bondPrice * Math.pow(1 + bondInterestRate, bondDaysHeld)).toFixed(2)}</span>`));
+            safeSetText('buy-bonds-btn', lang.buyBondsBtn);
+            safeSetText('sell-bonds-btn', lang.sellBondsBtn);
+            safeSetText('trade-label', lang.tradeLabel);
+            safeSetText('buy-stock-label', lang.buyStockLabel);
+            safeSetText('sell-stock-label', lang.sellStockLabel);
+            safeSetText('buy-stock-btn', lang.buyStockBtn);
+            safeSetText('sell-stock-btn', lang.sellStockBtn);
+            safeSetText('low-stocks-label', lang.lowStocksLabel);
+            safeSetText('low-stocks-desc', lang.lowStocksDesc);
+            safeSetText('stocks-label', lang.stocksLabel);
+            safeSetText('events-label', lang.eventsLabel);
+            safeSetText('next-day-btn', lang.nextDayBtn);
+            safeSetText('cash', cash.toFixed(2));
+            safeSetText('day', day);
+            safeSetText('national-debt', nationalDebt.toFixed(2));
+            safeSetText('portfolio-value', calculatePortfolioValue().toFixed(2));
+
+            const stockList = document.getElementById('stock-list');
+            if (stockList) {
+                stockList.innerHTML = '';
+                stocks.forEach(stock => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white p-6 rounded-lg shadow-md card';
+                    card.innerHTML = `
+                        <h5 class="text-lg font-semibold text-gray-800 mb-2">${stock.name}</h5>
+                        <p class="text-gray-600">${lang.price.replace('{price}', stock.price.toFixed(2))}</p>
+                        <p class="text-gray-600 mb-4">${lang.owned.replace('{owned}', stock.owned)}</p>
+                        <div class="chart-container">
+                            <canvas id="chart-${stock.name}" height="150"></canvas>
+                        </div>
+                    `;
+                    stockList.appendChild(card);
+
+                    if (charts[stock.name]) {
+                        charts[stock.name].destroy();
+                    }
+                    const ctx = document.getElementById(`chart-${stock.name}`);
+                    if (ctx) {
+                        charts[stock.name] = new Chart(ctx.getContext('2d'), {
+                            type: 'line',
+                            data: {
+                                labels: stock.history.map((_, i) => `${currentLanguage === 'en' ? 'Day' : '第'} ${i + 1} ${currentLanguage === 'en' ? '' : '天'}`),
+                                datasets: [{
+                                    label: stock.name,
+                                    data: stock.history,
+                                    borderColor: '#4f46e5',
+                                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                                    fill: true
+                                }]
+                            },
+                            options: {
+                                scales: { y: { beginAtZero: false } },
+                                plugins: { legend: { display: false } }
+                            }
+                        });
+                    }
+                });
+            }
+
+            const lowStocks = stocks.filter(s => s.price < s.initialPrice * 0.7);
+            const lowStocksContainer = document.getElementById('low-stocks');
+            if (lowStocksContainer) {
+                lowStocksContainer.innerHTML = lowStocks.length > 0 ? lowStocks.map(s => `
+                    <div class="bg-yellow-50 p-4 rounded-lg">
+                        <h6 class="text-md font-medium text-gray-800">${s.name}</h6>
+                        <p class="text-gray-600">${lang.price.replace('{price}', s.price.toFixed(2))}</p>
+                        <p class="text-gray-600 mb-2">${lang.price.replace('{price}', (s.price * 0.9).toFixed(2)).replace('Price', currentLanguage === 'en' ? 'Discounted Price' : currentLanguage === 'zh-hk' ? '折扣價格' : '折扣价格')}</p>
+                        <div class="flex space-x-2">
+                            <input type="number" id="low-shares-${s.name}" class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="${currentLanguage === 'en' ? 'Shares' : currentLanguage === 'zh-hk' ? '股份' : '股份'}" min="1">
+                            <button class="btn bg-yellow-500 text-white px-4 py-2 rounded-lg" onclick="absorbLowStock('${s.name}', parseInt(document.getElementById('low-shares-${s.name}')?.value || 0))">${lang.absorbLowBtn}</button>
+                        </div>
+                    </div>
+                `).join('') : `<p class="text-gray-600">${lang.noLowStocks}</p>`;
+            }
+
+            const buyStockSelect = document.getElementById('buy-stock');
+            const sellStockSelect = document.getElementById('sell-stock');
+            if (buyStockSelect) {
+                buyStockSelect.innerHTML = `<option value="">${lang.selectStock}</option>` + stocks.map(s => `
+                    <option value="${s.name}">${s.name}</option>
+                `).join('');
+                buyStockSelect.onchange = () => {
+                    const stockName = buyStockSelect.value;
+                    const stock = stocks.find(s => s.name === stockName);
+                    safeSetText('buy-price', stock ? lang.price.replace('{price}', stock.price.toFixed(2)).replace('Price', currentLanguage === 'en' ? 'Current Price' : currentLanguage === 'zh-hk' ? '當前價格' : '当前价格') : '');
+                    safeSetText('buy-message', '');
+                };
+            }
+            if (sellStockSelect) {
+                sellStockSelect.innerHTML = `<option value="">${lang.selectStock}</option>` + stocks.filter(s => s.owned > 0).map(s => `
+                    <option value="${s.name}">${s.name} (${s.owned} ${currentLanguage === 'en' ? 'owned' : currentLanguage === 'zh-hk' ? '持有' : '持有'})</option>
+                `).join('');
+                sellStockSelect.onchange = () => {
+                    const stockName = sellStockSelect.value;
+                    const stock = stocks.find(s => s.name === stockName);
+                    safeSetText('sell-price', stock ? lang.price.replace('{price}', stock.price.toFixed(2)).replace('Price', currentLanguage === 'en' ? 'Current Price' : currentLanguage === 'zh-hk' ? '當前價格' : '当前价格') : '');
+                    safeSetText('sell-message', '');
+                };
+            }
+
+            const eventList = document.getElementById('upcoming-events');
+            if (eventList) {
+                eventList.innerHTML = upcomingEvents.length > 0 ? upcomingEvents.map(e => `
+                    <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-3 rounded-lg mb-2">
+                        ${lang.upcomingEvent
+                            .replace('{day}', e.day)
+                            .replace('{description}', e.description[currentLanguage])
+                            .replace('{affected}', typeof e.affected === 'string' ? e.affected : e.affected[currentLanguage])}
+                    </div>
+                `).join('') : `<p class="text-gray-600">${lang.noEvents}</p>`;
+            }
+        }
+
+        function nextDay() {
+            if (!nonStopMode && day >= maxDays) {
+                updateUI();
+                return;
+            }
+            day++;
+            if (day > 9999) day = 1; // Reset day counter in Non-Stop Mode
+            bondDaysHeld++;
+            loanBalance *= (1 + loanInterestRate);
+            const dividends = calculateDailyDividends();
+            cash += dividends;
+            lowStockPurchasesToday = {};
+            updateNationalDebt();
+            updateStockPrices();
+            triggerEvent();
+            initializeUpcomingEvents();
+            updateUI();
+        }
+
+        // Language switcher
+        const languageSelect = document.getElementById('language-select');
+        if (languageSelect) {
+            languageSelect.addEventListener('change', (e) => {
+                currentLanguage = e.target.value;
+                updateUI();
+            });
+        }
+
+        // Initial setup
+        initializeUpcomingEvents();
+        updateUI();
+    </script>
+</body>
+</html>
